@@ -1,0 +1,161 @@
++
+---
+title: "OMNI Analysis"
+output: 
+  html_document:
+  toc: yes
+toc_float: yes
+theme: paper
+always_allow_html: yes
+---
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.path = 'figures/',
+                      warning = FALSE,
+                      message = FALSE,
+                      echo = FALSE,
+                      cache = FALSE)
+```
+
+
+```{r}
+source("functions.R")
+```
+
+
+```{r}
+fldr <- "data"
+```
+
+```{r}
+files_omni <- list.files(path = fldr,
+                          pattern = ".*_omni.rds",
+                          recursive = TRUE,
+                          full.names = TRUE)
+
+files_inst <- list.files(path = fldr,
+                         pattern = ".*_instlog.rds",
+                         recursive = TRUE)
+```
+
+```{r, cache = TRUE}
+read_omni_rds <- function(f)
+  read_rds(f) %>%
+    mutate(id_site = str_sub(f, 6, 8))
+```
+
+```{r, cache = TRUE}
+data_omni <- map(files_omni, read_omni_rds) %>%
+  bind_rows()
+```
+
+```{r, cache=TRUE}
+data_omni_clean <- data_omni %>%
+mutate(rh = if_else(is.na(rh), humid, rh),
+       toc = if_else(is.na(toc), temp, toc)) %>%
+select(-temp, -humid) %>%
+mutate(toc = if_else(toc > 50, NA_real_, toc))  %>%
+pivot_longer(cols = c("score", "toc", "rh", "co2", "light", "noise", "pm25", "voc"),
+             names_to = "var", values_to = "val")
+ 
+```
+
+```{r, include=FALSE, cache=TRUE}
+ggplot(data_omni_clean, aes(x = datetime, y = val, color = var)) +
+ geom_line() +
+ theme_bw() +
+ facet_wrap(~var, scales = "free")
+```
+
+```{r, cache=TRUE}
+co2 <- data_omni_clean %>%
+  filter(grepl("co2", var))
+```
+
+```{r, cache=TRUE}
+co2_stats <- co2 %>%
+  group_by(id_site, location) %>%
+  summarise(mean = mean(val, na.rm = TRUE),
+            median = median(val, na.rm = TRUE), 
+            .groups = "drop") %>%
+  group_by(id_site) %>% 
+  summarise(mean = mean(mean, na.rm = TRUE),
+            median = median(median, na.rm = TRUE)) %>%
+  arrange(-mean)
+```
+
+```{r}
+tvoc <- data_omni_clean %>%
+  filter(grepl("voc", var))
+```
+
+```{r, fig.height= 25}
+ggplot(tvoc %>% filter(id_site == "006"), aes(x = datetime, y = val)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  facet_wrap(id_site == "006" ~ location, ncol = 2, scales = "free_x") +
+  scale_x_datetime(date_labels = "%Y-%m-%d") +
+  ggtitle("Time Weighted Average VOC Concentrations")+
+  theme(text = element_text(size = 30))+
+  theme(title = element_text(size = 30))+
+  theme(axis.text.y = element_text(size=25))+
+  theme(axis.text.x = element_text(angle = -45, size = 25))
+```
+
+```{r}
+tvoc_site_006 <- tvoc %>%
+  filter(id_site == "006") %>%
+  pivot_wider(names_from = "location", values_from = "val") %>%
+  group_by(hod) %>%
+  summarise(cor_basement_dayprogram = cor(x = basement, y = dayprogram, method = "spearman", use = "na.or.complete"),
+            cor_basement_kitchen = cor(x = basement, y = kitchen, method = "spearman", use = "na.or.complete"),
+            cor_kitchen_waitingroom = cor(x = kitchen, y = waitingroom, method = "spearman", use = "na.or.complete"),
+            cor_kitchen_dayprogram = cor(x = kitchen, y = dayprogram, method = "spearman", use = "na.or.complete"),
+            cor_basement_waitingroom = cor(x = basement, y = waitingroom, method = "spearman", use = "na.or.complete"),
+            cor_waitingroom_dayprogram = cor(x = waitingroom, y = dayprogram, method = "spearman", use = "na.or.complete")) %>%
+  pivot_longer(cols = c("cor_basement_dayprogram", "cor_basement_kitchen", "cor_kitchen_waitingroom", "cor_kitchen_dayprogram","cor_basement_waitingroom", "cor_waitingroom_dayprogram"), names_to = "room_pair", values_to = "cor_spearman")
+``` 
+
+```{r}
+ggplot(tvoc_site_006, aes(x = hod, y = cor_spearman, color = room_pair)) +
+  geom_point() +
+  geom_line() +
+  ylab("cor") +
+  xlab("Hour of Day") +
+  ggtitle("Spearman Correlation Coefficients Between Rooms")+
+  theme_minimal()
+```
+
+
+```{r}
+ggplot(tvoc_site_006, aes(x = datetime, y = val)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  facet_wrap(~location, ncol = 4, scales = "free_x") +
+  scale_y_log10() +
+  scale_x_datetime(date_labels = "%Y-%m-%d") +
+  theme(axis.text.x = element_text(angle = -90, size = 8))
+```
+
+```{r}
+co2_tvoc <- data_omni_clean %>%
+  filter(grepl("co2|voc", var)) %>%
+  pivot_wider(names_from = "var", values_from = "val") %>%
+  filter(id_site == "006") %>%
+  mutate(day_night = if_else(hod >7 & hod < 18, "day", "night")) %>%
+  ggplot(aes(x = co2, y = voc, color = day_night)) +
+  geom_point() +
+  ggtitle("CO2 and VOC Comparison in Rooms")+
+  facet_wrap(~location) +
+  theme_minimal() +
+  scale_x_log10() +scale_y_log10()
+
+co2_tvoc
+```
+
+
+
+
